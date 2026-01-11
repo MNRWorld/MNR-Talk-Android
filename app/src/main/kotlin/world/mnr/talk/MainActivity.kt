@@ -6,12 +6,15 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.os.IBinder
 import android.view.KeyEvent
 import android.os.Bundle
 import android.os.Handler
@@ -50,6 +53,22 @@ class MainActivity : Activity() {
     private var currentCoverArtBitmap: Bitmap? = null
     private var notificationVisible = false
 
+    private var mediaPlaybackService: MediaPlaybackService? = null
+    private var isServiceBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as MediaPlaybackService.LocalBinder
+            mediaPlaybackService = binder.getService()
+            isServiceBound = true
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            isServiceBound = false
+            mediaPlaybackService = null
+        }
+    }
+
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "mnr_talk_playback"
@@ -82,6 +101,7 @@ class MainActivity : Activity() {
         addJavaScriptInterface()
         setupMediaSession()
         createNotificationChannel()
+        bindToMediaPlaybackService()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -275,9 +295,7 @@ class MainActivity : Activity() {
             val host = uri.host?.lowercase() ?: return false
 
             if (host == "talk.mnr.world" ||
-                host.endsWith(".talk.mnr.world") ||
-                host == "mnr.world" ||
-                host.endsWith(".mnr.world")) {
+                host.endsWith(".talk.mnr.world")) {
                 return true
             }
 
@@ -319,6 +337,7 @@ class MainActivity : Activity() {
         super.onDestroy()
         mediaSession.release()
         webView.destroy()
+        unbindFromMediaPlaybackService()
     }
 
     private fun addJavaScriptInterface() {
@@ -604,12 +623,14 @@ class MainActivity : Activity() {
         isAudioPlaying = true
         updatePlaybackState()
         showNotification()
+        startForegroundServiceIfReady()
     }
 
     private fun onAudioPaused() {
         isAudioPlaying = false
         updatePlaybackState()
         updateNotification()
+        stopForegroundService()
     }
 
     private fun loadCoverArt(url: String?) {
@@ -806,5 +827,28 @@ class MainActivity : Activity() {
         """.trimIndent()
 
         webView.evaluateJavascript(script, null)
+    }
+
+    private fun bindToMediaPlaybackService() {
+        Intent(this, MediaPlaybackService::class.java).also { intent ->
+            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+    }
+
+    private fun unbindFromMediaPlaybackService() {
+        if (isServiceBound) {
+            unbindService(serviceConnection)
+            isServiceBound = false
+            mediaPlaybackService = null
+        }
+    }
+
+    private fun startForegroundServiceIfReady() {
+        val notification = createNotification()
+        mediaPlaybackService?.startForeground(notification)
+    }
+
+    private fun stopForegroundService() {
+        mediaPlaybackService?.stopForegroundService()
     }
 }
