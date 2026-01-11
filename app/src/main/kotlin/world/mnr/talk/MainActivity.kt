@@ -26,7 +26,9 @@ import android.view.View
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -39,6 +41,8 @@ import kotlin.concurrent.thread
 class MainActivity : Activity() {
 
     private lateinit var webView: WebView
+    private lateinit var splashScreen: android.view.View
+    private var currentUrl: String = "https://talk.mnr.world"
     private val FILE_CHOOSER_REQUEST_CODE = 100
     private val PERMISSION_REQUEST_CODE = 101
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
@@ -72,8 +76,6 @@ class MainActivity : Activity() {
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "mnr_talk_playback"
-        private const val ACTION_PLAY = "world.mnr.talk.ACTION_PLAY"
-        private const val ACTION_PAUSE = "world.mnr.talk.ACTION_PAUSE"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 102
     }
 
@@ -82,6 +84,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            @Suppress("DEPRECATION")
             window.statusBarColor = android.graphics.Color.parseColor("#292929")
         }
 
@@ -93,9 +96,11 @@ class MainActivity : Activity() {
         setContentView(R.layout.activity_main)
 
         webView = findViewById(R.id.webview)
+        splashScreen = findViewById(R.id.splash_screen)
 
         setupWebView()
         val urlToLoad = intent?.dataString ?: "https://talk.mnr.world"
+        currentUrl = urlToLoad
         webView.loadUrl(urlToLoad)
 
         addJavaScriptInterface()
@@ -129,9 +134,33 @@ class MainActivity : Activity() {
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    url?.let { currentUrl = it }
                     Handler(Looper.getMainLooper()).postDelayed({
+                        hideSplashScreen()
                         injectAudioDetectionScript()
                     }, 1000)
+                }
+
+                override fun onReceivedError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    error: WebResourceError?
+                ) {
+                    super.onReceivedError(view, request, error)
+                    if (request?.isForMainFrame == true) {
+                        showOfflinePage()
+                    }
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    errorResponse: WebResourceResponse?
+                ) {
+                    super.onReceivedHttpError(view, request, errorResponse)
+                    if (request?.isForMainFrame == true) {
+                        showOfflinePage()
+                    }
                 }
 
                 override fun shouldOverrideUrlLoading(
@@ -172,10 +201,6 @@ class MainActivity : Activity() {
                             )
                             return
                         }
-                    }
-
-                    if (resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) {
-                        grantedResources.add(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
                     }
 
                     if (resources.contains(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID)) {
@@ -284,6 +309,7 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         intent?.dataString?.let { url ->
             if (shouldOpenInApp(url)) {
+                currentUrl = url
                 webView.loadUrl(url)
             }
         }
@@ -325,14 +351,6 @@ class MainActivity : Activity() {
         webView.restoreState(savedInstanceState)
     }
 
-    override fun onPause() {
-        super.onPause()
-    }
-
-    override fun onResume() {
-        super.onResume()
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         mediaSession.release()
@@ -366,6 +384,15 @@ class MainActivity : Activity() {
                 }
             }
         }, "AndroidMediaController")
+
+        webView.addJavascriptInterface(object {
+            @android.webkit.JavascriptInterface
+            fun retry() {
+                runOnUiThread {
+                    retryLoad()
+                }
+            }
+        }, "AndroidRetry")
     }
 
     private fun setupMediaSession() {
@@ -553,13 +580,6 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun hideNotification() {
-        if (!notificationVisible) return
-        val notificationManager = NotificationManagerCompat.from(this)
-        notificationManager.cancel(NOTIFICATION_ID)
-        notificationVisible = false
-    }
-
     private fun createNotification(): Notification {
         val openAppIntent = Intent(this, MainActivity::class.java)
         val openAppPendingIntent = PendingIntent.getActivity(
@@ -744,12 +764,10 @@ class MainActivity : Activity() {
                     const audioElements = document.querySelectorAll('audio, video');
                     audioElements.forEach(audio => {
                         audio.removeEventListener('play', onPlay);
-                        audio.removeEventListener('playing', onPlaying);
                         audio.removeEventListener('pause', onPause);
                         audio.removeEventListener('ended', onEnded);
 
                         audio.addEventListener('play', onPlay, false);
-                        audio.addEventListener('playing', onPlaying, false);
                         audio.addEventListener('pause', onPause, false);
                         audio.addEventListener('ended', onEnded, false);
 
@@ -758,12 +776,6 @@ class MainActivity : Activity() {
                 }
 
                 function onPlay() {
-                    lastPlayingState = true;
-                    updateMetadata();
-                    window.AndroidMediaController?.onAudioPlay();
-                }
-
-                function onPlaying() {
                     lastPlayingState = true;
                     updateMetadata();
                     window.AndroidMediaController?.onAudioPlay();
@@ -850,5 +862,118 @@ class MainActivity : Activity() {
 
     private fun stopForegroundService() {
         mediaPlaybackService?.stopForegroundService()
+    }
+
+    private fun hideSplashScreen() {
+        splashScreen.animate()
+            .alpha(0f)
+            .setDuration(300)
+            .withEndAction {
+                splashScreen.visibility = android.view.View.GONE
+                webView.visibility = android.view.View.VISIBLE
+            }
+            .start()
+    }
+
+    private fun getOfflinePage(): String {
+        return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    * {
+                        margin: 0;
+                        padding: 0;
+                        box-sizing: border-box;
+                    }
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                        background-color: #292929;
+                        color: #ffffff;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        justify-content: center;
+                        min-height: 100vh;
+                        padding: 20px;
+                        text-align: center;
+                    }
+                    .offline-icon {
+                        width: 80px;
+                        height: 80px;
+                        margin-bottom: 24px;
+                        opacity: 0.7;
+                    }
+                    .offline-icon svg {
+                        width: 100%;
+                        height: 100%;
+                        fill: none;
+                        stroke: #ffffff;
+                        stroke-width: 1.5;
+                        stroke-linecap: round;
+                        stroke-linejoin: round;
+                    }
+                    h1 {
+                        font-size: 24px;
+                        font-weight: 600;
+                        margin-bottom: 16px;
+                    }
+                    p {
+                        font-size: 16px;
+                        opacity: 0.7;
+                        margin-bottom: 32px;
+                        line-height: 1.5;
+                    }
+                    .retry-button {
+                        background-color: #ffffff;
+                        color: #292929;
+                        border: none;
+                        padding: 12px 32px;
+                        font-size: 16px;
+                        font-weight: 600;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        transition: opacity 0.2s;
+                    }
+                    .retry-button:hover {
+                        opacity: 0.9;
+                    }
+                    .retry-button:active {
+                        opacity: 0.8;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="offline-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                        <path d="M1 1l22 22"></path>
+                        <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path>
+                        <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path>
+                        <path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path>
+                        <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path>
+                        <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                        <line x1="12" y1="20" x2="12.01" y2="20"></line>
+                    </svg>
+                </div>
+                <h1>You're Offline</h1>
+                <p>Offline feature is not fully implemented.<br>Please check your internet connection.</p>
+                <button class="retry-button" onclick="window.AndroidRetry.retry()">Retry</button>
+            </body>
+            </html>
+        """.trimIndent()
+    }
+
+    private fun showOfflinePage() {
+        hideSplashScreen()
+        webView.loadDataWithBaseURL(null, getOfflinePage(), "text/html", "UTF-8", null)
+    }
+
+    private fun retryLoad() {
+        splashScreen.visibility = android.view.View.VISIBLE
+        splashScreen.alpha = 1f
+        webView.visibility = android.view.View.INVISIBLE
+        webView.loadUrl(currentUrl)
     }
 }

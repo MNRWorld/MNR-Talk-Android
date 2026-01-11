@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/root_container"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -10,6 +11,25 @@
         android:id="@+id/webview"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#292929" />
+        android:background="#292929"
+        android:visibility="invisible" />
+
+    <!-- Splash Screen -->
+    <LinearLayout
+        android:id="@+id/splash_screen"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="#292929">
+
+        <ProgressBar
+            android:id="@+id/splash_spinner"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:indeterminateTint="#FFFFFF"
+            tools:targetApi="lollipop" />
+
+    </LinearLayout>
 
 </FrameLayout>

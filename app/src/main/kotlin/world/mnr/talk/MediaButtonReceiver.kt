@@ -20,7 +20,13 @@ class MediaButtonReceiver : BroadcastReceiver() {
         if (intent == null) return
 
         if (intent.action == Intent.ACTION_MEDIA_BUTTON) {
-            val keyEvent = intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT)
+            val keyEvent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT)
+            }
+
             if (keyEvent != null && keyEvent.action == KeyEvent.ACTION_DOWN) {
                 val ctrl = controller ?: return
                 when (keyEvent.keyCode) {
